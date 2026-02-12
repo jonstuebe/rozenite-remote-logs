@@ -11,7 +11,9 @@
     "dev": "rozenite dev"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "package.json"
   ],
   "dependencies": {
     "@rozenite/plugin-bridge": "1.0.0-alpha.3"
