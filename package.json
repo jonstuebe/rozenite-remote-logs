@@ -10,6 +10,9 @@
     "build": "rozenite build",
     "dev": "rozenite dev"
   },
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@rozenite/plugin-bridge": "1.0.0-alpha.3"
   },
