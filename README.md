@@ -1,14 +1,14 @@
 # rozenite-remote-logs
 
-A [Rozenite](https://rozenite.dev) DevTools plugin for React Native that streams console output to a file.
+A [Rozenite](https://rozenite.dev) DevTools plugin for React Native that streams console output to a file on your development machine.
 
 ## Features
 
 - Intercepts all console methods (`log`, `warn`, `error`, `info`, `debug`)
-- Writes logs to a file on the device filesystem
+- Writes logs directly to your host machine's filesystem (not the device)
 - Toggle logging on/off from the Rozenite DevTools panel
-- Queue-based file writing to prevent race conditions
 - Auto-enable option for immediate logging on mount
+- Configurable file path with sensible default
 
 ## Installation
 
@@ -25,7 +25,7 @@ bun add rozenite-remote-logs
 This plugin requires the following peer dependencies:
 
 ```bash
-npm install react react-native expo-file-system
+npm install react react-native
 ```
 
 ## Usage
@@ -34,12 +34,9 @@ Add the `useRemoteLogs` hook to your app's root component:
 
 ```tsx
 import { useRemoteLogs } from "rozenite-remote-logs";
-import * as FileSystem from "expo-file-system";
 
 function App() {
-  useRemoteLogs({
-    filePath: `${FileSystem.documentDirectory}app-logs.txt`,
-  });
+  useRemoteLogs();
 
   return (
     // Your app content
@@ -47,18 +44,20 @@ function App() {
 }
 ```
 
+By default, logs are written to `./logs/app.log` in your project directory.
+
 ### Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `filePath` | `string` | **required** | Path where logs will be written |
+| `filePath` | `string` | `./logs/app.log` | Path where logs will be written on host machine |
 | `autoEnable` | `boolean` | `false` | Automatically start logging on mount |
 
-### Auto-Enable Example
+### Custom File Path Example
 
 ```tsx
 useRemoteLogs({
-  filePath: `${FileSystem.documentDirectory}debug.log`,
+  filePath: "./logs/debug.log",
   autoEnable: true, // Start logging immediately
 });
 ```
@@ -68,36 +67,44 @@ useRemoteLogs({
 Once installed, the **Remote Logs** panel appears in Rozenite DevTools. From there you can:
 
 - See the current logging status (enabled/disabled)
+- View the current log file path
+- See the number of logs written in the current session
 - Toggle logging on or off with a single click
 
 ## How It Works
 
 1. The hook patches the global `console` methods to intercept output
-2. When enabled, each console call is serialized and appended to the specified file
-3. The DevTools panel communicates with your app via the Rozenite plugin bridge
+2. When enabled, each console call is serialized and sent to the DevTools panel via the Rozenite plugin bridge
+3. The DevTools panel (running on your development machine) writes the logs to the filesystem
 4. Original console behavior is preserved—logs still appear in your terminal/debugger
 
-## Retrieving Logs
-
-Logs are written to the file path you specify. Common ways to retrieve them:
-
-**Using Expo CLI:**
-```bash
-# List files in the document directory
-npx expo run:ios --device
-
-# Or use adb for Android
-adb pull /data/data/com.yourapp/files/app-logs.txt ./logs.txt
+```
+React Native App                    DevTools Panel (Host Machine)
+      │                                       │
+      │  console.log("Hello")                 │
+      │         │                             │
+      │         ▼                             │
+      │  [Intercept & Serialize]              │
+      │         │                             │
+      │         └──── Plugin Bridge ──────────▶ [Write to ./logs/app.log]
+      │                                       │
+      ▼                                       ▼
+  Terminal output                    File on your machine
 ```
 
-**Programmatically:**
-```tsx
-import * as FileSystem from "expo-file-system";
+## Viewing Logs
 
-const logs = await FileSystem.readAsStringAsync(
-  `${FileSystem.documentDirectory}app-logs.txt`
-);
-console.log(logs);
+Since logs are written directly to your development machine, you can view them with any standard tool:
+
+```bash
+# Watch logs in real-time
+tail -f ./logs/app.log
+
+# View all logs
+cat ./logs/app.log
+
+# Clear logs
+rm ./logs/app.log
 ```
 
 ## License

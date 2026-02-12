@@ -1,25 +1,28 @@
 /**
  * React Native DevTools Plugin Entry Point
  *
- * This plugin intercepts console output and writes it to a file when enabled.
+ * This plugin intercepts console output and streams it to the host machine
+ * via the Rozenite DevTools panel, which writes logs to the filesystem.
  */
 
 import { useEffect, useRef } from "react";
 import { useRozeniteDevToolsClient } from "@rozenite/plugin-bridge";
-import * as FileSystem from "expo-file-system";
 
 const PLUGIN_ID = "remote-logs";
+const DEFAULT_FILE_PATH = "./logs/app.log";
 
 interface PluginEvents {
   "toggle-enabled": undefined;
-  "status-update": { enabled: boolean };
+  "status-update": { enabled: boolean; filePath: string };
   "request-status": undefined;
+  "log-entry": { message: string; level: string; timestamp: string };
+  "set-config": { filePath: string };
 }
 
 type ConsoleMethod = "log" | "warn" | "error" | "info" | "debug";
 
 interface UseRemoteLogsOptions {
-  filePath: string;
+  filePath?: string;
   autoEnable?: boolean;
 }
 
@@ -32,38 +35,18 @@ const originalConsole: Record<ConsoleMethod, (...args: unknown[]) => void> = {
   debug: console.debug,
 };
 
-// Global state for enabled status
+// Global state
 let isEnabled = false;
-let currentFilePath: string | null = null;
+let currentFilePath: string = DEFAULT_FILE_PATH;
+let currentClient: ReturnType<typeof useRozeniteDevToolsClient<PluginEvents>> | null = null;
 
-// Queue for file writes to avoid race conditions
-let writeQueue: Promise<void> = Promise.resolve();
+function sendLogEntry(level: string, message: string) {
+  if (!isEnabled || !currentClient) return;
 
-async function appendToFile(message: string) {
-  if (!currentFilePath || !isEnabled) return;
-
-  writeQueue = writeQueue.then(async () => {
-    try {
-      const fileInfo = await FileSystem.getInfoAsync(currentFilePath!);
-      const content = message + "\n";
-
-      if (fileInfo.exists) {
-        // Read existing content and append
-        const existingContent = await FileSystem.readAsStringAsync(
-          currentFilePath!
-        );
-        await FileSystem.writeAsStringAsync(
-          currentFilePath!,
-          existingContent + content
-        );
-      } else {
-        // Create new file
-        await FileSystem.writeAsStringAsync(currentFilePath!, content);
-      }
-    } catch (err) {
-      // Use original console to avoid infinite loop
-      originalConsole.error("[remote-logs] Failed to write to file:", err);
-    }
+  currentClient.send("log-entry", {
+    message,
+    level,
+    timestamp: new Date().toISOString(),
   });
 }
 
@@ -92,10 +75,10 @@ function patchConsole() {
       // Always call original
       originalConsole[method].apply(console, args);
 
-      // Write to file if enabled
-      if (isEnabled && currentFilePath) {
+      // Send to DevTools panel if enabled
+      if (isEnabled && currentClient) {
         const message = serializeArgs(args);
-        appendToFile(message);
+        sendLogEntry(method, message);
       }
     };
   });
@@ -109,9 +92,9 @@ function restoreConsole() {
 }
 
 export function useRemoteLogs({
-  filePath,
+  filePath = DEFAULT_FILE_PATH,
   autoEnable = false,
-}: UseRemoteLogsOptions) {
+}: UseRemoteLogsOptions = {}) {
   const client = useRozeniteDevToolsClient<PluginEvents>({
     pluginId: PLUGIN_ID,
   });
@@ -139,23 +122,30 @@ export function useRemoteLogs({
   useEffect(() => {
     if (!client) return;
 
+    // Store client reference for log sending
+    currentClient = client;
+
+    // Send config to panel
+    client.send("set-config", { filePath: currentFilePath });
+
     // Send current status when panel requests it
     const statusSubscription = client.onMessage("request-status", () => {
-      client.send("status-update", { enabled: isEnabled });
+      client.send("status-update", { enabled: isEnabled, filePath: currentFilePath });
     });
 
     // Handle toggle from panel
     const toggleSubscription = client.onMessage("toggle-enabled", () => {
       isEnabled = !isEnabled;
-      client.send("status-update", { enabled: isEnabled });
+      client.send("status-update", { enabled: isEnabled, filePath: currentFilePath });
     });
 
     // Send initial status
-    client.send("status-update", { enabled: isEnabled });
+    client.send("status-update", { enabled: isEnabled, filePath: currentFilePath });
 
     return () => {
       statusSubscription.remove();
       toggleSubscription.remove();
+      currentClient = null;
     };
-  }, [client]);
+  }, [client, filePath]);
 }

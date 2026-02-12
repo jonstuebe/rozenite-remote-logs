@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Text,
   View,
@@ -7,13 +7,34 @@ import {
   SafeAreaView,
 } from "react-native";
 import { useRozeniteDevToolsClient } from "@rozenite/plugin-bridge";
+import * as fs from "fs";
+import * as path from "path";
 
 const PLUGIN_ID = "remote-logs";
 
 interface PluginEvents {
   "toggle-enabled": undefined;
-  "status-update": { enabled: boolean };
+  "status-update": { enabled: boolean; filePath: string };
   "request-status": undefined;
+  "log-entry": { message: string; level: string; timestamp: string };
+  "set-config": { filePath: string };
+}
+
+function ensureDirectoryExists(filePath: string) {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function appendToLogFile(filePath: string, entry: { message: string; level: string; timestamp: string }) {
+  try {
+    ensureDirectoryExists(filePath);
+    const logLine = `[${entry.timestamp}] [${entry.level.toUpperCase()}] ${entry.message}\n`;
+    fs.appendFileSync(filePath, logLine);
+  } catch (err) {
+    console.error("[remote-logs] Failed to write to file:", err);
+  }
 }
 
 export default function LogsPanel() {
@@ -23,6 +44,13 @@ export default function LogsPanel() {
 
   const [enabled, setEnabled] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [filePath, setFilePath] = useState<string>("./logs/app.log");
+  const [logCount, setLogCount] = useState(0);
+
+  const handleLogEntry = useCallback((data: { message: string; level: string; timestamp: string }) => {
+    appendToLogFile(filePath, data);
+    setLogCount((prev) => prev + 1);
+  }, [filePath]);
 
   useEffect(() => {
     if (!client) {
@@ -33,17 +61,30 @@ export default function LogsPanel() {
     setConnected(true);
 
     // Listen for status updates from React Native
-    const subscription = client.onMessage("status-update", (data) => {
+    const statusSubscription = client.onMessage("status-update", (data) => {
       setEnabled(data.enabled);
+      if (data.filePath) {
+        setFilePath(data.filePath);
+      }
     });
+
+    // Listen for config updates
+    const configSubscription = client.onMessage("set-config", (data) => {
+      setFilePath(data.filePath);
+    });
+
+    // Listen for log entries
+    const logSubscription = client.onMessage("log-entry", handleLogEntry);
 
     // Request current status
     client.send("request-status", undefined);
 
     return () => {
-      subscription.remove();
+      statusSubscription.remove();
+      configSubscription.remove();
+      logSubscription.remove();
     };
-  }, [client]);
+  }, [client, handleLogEntry]);
 
   const handleToggle = () => {
     if (client) {
@@ -56,7 +97,7 @@ export default function LogsPanel() {
       <View style={styles.content}>
         <Text style={styles.title}>Remote Logs</Text>
         <Text style={styles.description}>
-          Write console output to a file in your project.
+          Stream console output to a file on your machine.
         </Text>
 
         <View style={styles.statusContainer}>
@@ -71,6 +112,17 @@ export default function LogsPanel() {
             {enabled ? "Enabled" : "Disabled"}
           </Text>
         </View>
+
+        <View style={styles.filePathContainer}>
+          <Text style={styles.filePathLabel}>Log file:</Text>
+          <Text style={styles.filePath}>{filePath}</Text>
+        </View>
+
+        {enabled && (
+          <Text style={styles.logCount}>
+            {logCount} log{logCount !== 1 ? "s" : ""} written
+          </Text>
+        )}
 
         <Pressable
           style={({ pressed }) => [
@@ -123,7 +175,7 @@ const styles = StyleSheet.create({
   statusContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 24,
+    marginBottom: 16,
   },
   statusLabel: {
     fontSize: 16,
@@ -147,12 +199,33 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#333",
   },
+  filePathContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  filePathLabel: {
+    fontSize: 14,
+    color: "#666",
+    marginRight: 8,
+  },
+  filePath: {
+    fontSize: 14,
+    color: "#333",
+    fontFamily: "monospace",
+  },
+  logCount: {
+    fontSize: 12,
+    color: "#22c55e",
+    marginBottom: 24,
+  },
   button: {
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 8,
     minWidth: 180,
     alignItems: "center",
+    marginTop: 16,
   },
   buttonEnable: {
     backgroundColor: "#22c55e",
